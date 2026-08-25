@@ -140,12 +140,23 @@ all still work in the Slack surface if needed later.
 **3.1 STT integration**
 - What: wire faster-whisper, rolling local audio buffer.
 - Why: primary pick — mature, low friction, good latency/accuracy balance (plan §3).
-- Stack: faster-whisper (start); Parakeet-TDT swap-in only if 300ms+ latency becomes real problem.
+- Stack: faster-whisper, via pipecat's `WhisperSTTService`
+  (`pipecat.services.whisper.stt`, confirmed by reading its source —
+  it wraps `faster-whisper` directly) rather than a hand-rolled
+  wrapper. First pass (`app/voice/stt.py`, since removed) called
+  `faster-whisper` directly with a fixed-duration recorded chunk;
+  pipecat's own local audio transport + Silero VAD gives real
+  turn-based recording instead (see 3.6). Parakeet-TDT swap-in still
+  the fallback if 300ms+ latency becomes a real problem.
 
 **3.2 Name-mention / wake-word detector**
 - What: cheap local detector scans STT transcript segments for agent's name; only matching segment forwarded to LLM.
 - Why: privacy + cost — most meeting audio never leaves STT (plan §2).
-- Stack: local, lightweight (not LLM-based).
+- Stack: pipecat's native `WakePhraseUserTurnStartStrategy`
+  (`pipecat.turns.user_start`), not LLM-based — same cost/privacy
+  property as originally planned. Replaces a first-pass hand-rolled
+  regex whole-word match (`app/voice/wake_word.py`, since removed);
+  functionally equivalent, just maintained upstream instead of by us.
 
 **3.3 LLM answer call**
 - What: on trigger, send transcript segment + retrieved memory context to LLM, get answer text.
@@ -160,12 +171,37 @@ all still work in the Slack surface if needed later.
 **3.5 TTS integration**
 - What: wire Kokoro, generic voice per agent.
 - Why: primary pick — MIT license, CPU-only, cheapest self-host, tops TTS Arena open models (plan §3).
-- Stack: Kokoro (start); CosyVoice2 if latency insufficient once on GPU; Fish Speech/Chatterbox deferred (voice cloning = phase 3+, needs separate consent flow, not day one).
+- Stack: Kokoro, via pipecat's `KokoroTTSService`
+  (`pipecat.services.kokoro.tts`, confirmed by reading its source —
+  it wraps the `kokoro-onnx` package directly, not `kokoro`, for the
+  same reason noted below). `kokoro-onnx` was picked over the `kokoro`
+  PyPI package because `kokoro` pulls `misaki[en]` -> a pinned `spacy`
+  dev-prerelease -> `blis`, which has no Python 3.13 wheel and fails
+  to build from source on this stack; `kokoro-onnx` runs the same
+  model over ONNX runtime with no spacy dependency. Model files
+  (`kokoro-v1.0.onnx`, `voices-v1.0.bin`) are optional to fetch by
+  hand (README §7) — pipecat's service auto-downloads them to
+  `~/.cache/pipecat/kokoro-onnx` from the same GitHub release URLs if
+  missing. CosyVoice2 if latency insufficient once on GPU; Fish
+  Speech/Chatterbox deferred (voice cloning = phase 3+, needs separate
+  consent flow, not day one).
 
 **3.6 Standalone test harness**
 - What: run full STT→trigger→LLM→TTS loop in voice channel or local harness, no live meeting yet.
 - Why: prove pipeline + tune wake-word trigger before risking live meeting (plan §5.3).
-- Stack: all of 3.1–3.5 wired together, no Meet/Zoom integration yet.
+- Stack: pipecat pipeline (`app/voice/bot.py`, run via
+  `python -m app.voice.bot`) using `LocalAudioTransport` for real mic
+  in / speaker out — a continuous, always-listening process (real
+  Silero VAD turn detection, Ctrl+C to stop), not a fixed-duration
+  recording. Confidence-gate logic (3.4) is isolated in
+  `app/voice/rag_gate.py` and unit-tested directly
+  (`tests/test_rag_gate.py`) rather than through an automated pipecat
+  pipeline test — a deliberate trade-off (async pipeline testing adds
+  real complexity; the one piece of custom logic stays fast/plain to
+  test, the surrounding pipecat wiring gets exercised by hand). No
+  Meet/Zoom integration yet — pipecat has no native Google Meet
+  transport either, so the M4 SDK-pick open item is unchanged by this
+  migration.
 
 ## Phase 4 — Live meeting presence
 
@@ -216,11 +252,10 @@ all still work in the Slack surface if needed later.
 
 - Slack framework pick (1.5)
 - Meet bot-join SDK pick (4.1 / M4)
-- Gmail transcript identification (M1) — no real sample email yet;
-  `GMAIL_TRANSCRIPT_QUERY` defaults to a broad `in:inbox` scan. User
-  will test by emailing the connected mailbox from a different address.
-  Narrow the query (sender/subject/label) once a real Meet
-  auto-transcript email is seen.
+- Gmail transcript identification (M1) — `GMAIL_TRANSCRIPT_QUERY`
+  defaults to `from:noreply-meet@google.com` (Google Meet's known
+  auto-transcript sender). Not yet verified against a real Meet
+  transcript email; revisit if the actual sender/subject differs.
 - Gmail live listener (M1) — only a backfill/re-run job is built
   (`app/memory/ingest_gmail.py`, mirrors `backfill_slack.py`). A live
   ingest path needs a separate Gmail Pub/Sub push subscription — not

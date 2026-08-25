@@ -17,7 +17,14 @@ venv/
 .coverage
 htmlcov/
 
+# Voice loop model weights — large binaries, fetched via README §7
+# (kokoro-v1.0.onnx is ~325MB, over GitHub's 100MB push limit)
+/kokoro-v1.0.onnx
+/voices-v1.0.bin
+
 # OS / editor junk
 .DS_Store
 .idea/
 .vscode/
+.gstack/
+.serena/

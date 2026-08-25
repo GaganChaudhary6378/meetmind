@@ -13,9 +13,9 @@ required for the MVP to ship.
 
 | Task | Status | File(s) | Note |
 | --- | --- | --- | --- |
-| M1 Gmail connector | done | `app/memory/ingest_gmail.py` | per-user OAuth (user confirmed); no real transcript sample yet, so `GMAIL_TRANSCRIPT_QUERY` defaults to `in:inbox` — user will test by emailing the connected mailbox from another address. No live Gmail listener (needs Pub/Sub push, not built) — backfill/re-run only, mirrors `backfill_slack.py`. |
+| M1 Gmail connector | done | `app/memory/ingest_gmail.py` | per-user OAuth (user confirmed); `GMAIL_TRANSCRIPT_QUERY` defaults to `from:noreply-meet@google.com` (user confirmed sender filter). No live Gmail listener (needs Pub/Sub push, not built) — backfill/re-run only, mirrors `backfill_slack.py`. |
 | M2 Slack historical ingestion | done (reused) | `app/memory/ingest_slack.py`, `app/memory/backfill_slack.py` | already covers this, no new work |
-| M3 Voice loop | not started | (Phase 3 files, none yet) | |
+| M3 Voice loop | done | `app/voice/bot.py`, `app/voice/rag_gate.py` | shared-memory-only (no private branch — MVP scope). Migrated to pipecat (2026-08-26) after a hand-rolled first pass worked live but had real gaps (fixed-duration recording, regex wake-word) — see Phase 3 table below. |
 | M4 Google Meet bot-join | not started | (Phase 4 files, none yet) | SDK pick still open |
 | M5 Live answer (shared-only) | not started | | depends on M1, M3, M4 |
 | M5a Source citation in Meet chat | not started | | depends on M5 + M4's chat-post capability (SDK pick still open) |
@@ -46,7 +46,30 @@ Tests: `tests/test_facilitator_a2a.py` — real local A2A servers over HTTP, `Pe
 **Phase 2 status: done. Needs a real multi-person Slack test when a second teammate is available — see README §3.**
 
 ## Phase 3 — Voice loop
-Not started.
+
+Built twice. First pass (2026-08-26) hand-rolled STT/wake-word/TTS
+wrappers directly — worked, confirmed live end to end (STT, wake-word,
+`org_shared` retrieval, confidence gate, TTS all fired correctly). But
+had real gaps surfaced by that live test: fixed-duration mic recording
+instead of real turn detection, a regex wake-word check, and manual
+backend wiring (hit one dead-end already — the `kokoro` PyPI package
+doesn't install on Python 3.13, worked around with `kokoro-onnx`).
+Investigated [pipecat](https://github.com/pipecat-ai/pipecat) (fetched
+its README and multiple source files directly) and migrated same day
+— it wraps the exact same backends (`faster-whisper`, `kokoro-onnx`,
+OpenRouter) plus real VAD and native wake-phrase handling. Full plan
+in `/Users/apple/.claude/plans/refactored-scribbling-boole.md`.
+
+| Task | Status | File(s) | Note |
+| --- | --- | --- | --- |
+| 3.1 STT integration | done | `app/voice/bot.py` (`WhisperSTTService`) | pipecat's Whisper service, itself a direct `faster-whisper` wrapper (confirmed by reading its source); model size via `STT_MODEL_SIZE` |
+| 3.2 Name-mention / wake-word detector | done | `app/voice/bot.py` (`WakePhraseUserTurnStartStrategy`) | pipecat's native wake-phrase turn strategy, replaces the old hand-rolled regex; phrase = `AGENT_NAME` |
+| 3.3 LLM answer call | done | `app/voice/bot.py` (`OpenRouterLLMService`), `app/voice/rag_gate.py` (`VOICE_SYSTEM_PROMPT`) | pipecat's OpenRouter LLM service, same API key/base URL as `app/llm/router.py`; system prompt kept in `rag_gate.py` — plain spoken sentences, no markdown, since TTS speaks the reply verbatim |
+| 3.4 Confidence threshold gate | done | `app/voice/rag_gate.py` (`RagGate.resolve`) | reuses `CONFIDENCE_THRESHOLD`; kept plain/synchronous on purpose (not folded into the async pipecat pipeline) so it stays fast to unit-test |
+| 3.5 TTS integration | done | `app/voice/bot.py` (`KokoroTTSService`) | pipecat's Kokoro service, a direct `kokoro-onnx` wrapper — even auto-downloads the same model files we'd fetched by hand, from the same GitHub release URLs |
+| 3.6 Standalone test harness | done | `app/voice/bot.py` (run via `python -m app.voice.bot`), `tests/test_rag_gate.py` | real mic/speaker via pipecat's `LocalAudioTransport`, continuous listening (Ctrl+C to stop) — no fixed duration like the old `manual_voice_mic.py`. Confidence-gate logic separately unit-tested (`test_rag_gate.py`, no audio/pipecat needed); full pipeline wiring exercised by hand, not by an automated pipecat-eval test (explicit trade-off, see plan) |
+
+**Phase 3 status: done (standalone, no live meeting join — that's phase 4 / M4). pipecat does not solve M4 either — no native Google Meet transport; the SDK-pick open item is unchanged.**
 
 ## Phase 4 — Live meeting presence
 Not started.
@@ -62,4 +85,4 @@ Not started.
 - Gmail live listener (M1) — only backfill/re-run built; a live path needs a Gmail Pub/Sub push subscription, not built
 
 ---
-Last updated: 2026-08-26 (M1 Gmail connector built — per-user OAuth, backfill-only, broad default query pending a real transcript sample)
+Last updated: 2026-08-26 (M3 voice loop migrated to pipecat — real VAD turn detection + native wake-phrase handling, replaces the first hand-rolled pass; still standalone only, no Meet join yet)

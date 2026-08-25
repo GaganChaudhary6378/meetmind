@@ -36,6 +36,11 @@ Fill in `.env`:
 | `GMAIL_CLIENT_ID` / `GMAIL_CLIENT_SECRET` | Google Cloud Console → APIs & Services → Credentials → OAuth client ID, type "Desktop app" |
 | `GMAIL_REFRESH_TOKEN` | One-time local OAuth consent flow — see §6 |
 | `GMAIL_TRANSCRIPT_QUERY` | Gmail search query for transcript emails. Default `in:inbox` — narrow once a real transcript email format is seen |
+| `AGENT_NAME` | The word the voice loop's wake-word detector (§7) listens for |
+| `STT_MODEL_SIZE` | faster-whisper model size, e.g. `base`, `small`, `medium` |
+| `STT_VOCAB_HINT` | Not currently wired up — pipecat's WhisperSTTService doesn't expose faster-whisper's vocabulary-bias param. Kept for later. |
+| `TTS_VOICE` | Kokoro voice id, e.g. `af_heart` |
+| `KOKORO_MODEL_PATH` / `KOKORO_VOICES_PATH` | Downloaded once from github.com/thewh1teagle/kokoro-onnx releases — see §7 |
 
 Required Slack app scopes: `chat:write`, `commands`, `channels:history` (or
 `groups:history` for private channels), Socket Mode enabled.
@@ -166,12 +171,12 @@ python -m app.memory.ingest_gmail
 ```
 
 Scans the connected mailbox for messages matching `GMAIL_TRANSCRIPT_QUERY`
-(default `in:inbox`) and writes each into `org_shared`. No confirmed
-sample of Google Meet's real auto-transcript email exists yet — for
-testing, send a test email from a different address to the connected
-mailbox and it will be picked up by the default broad query. Narrow
-`GMAIL_TRANSCRIPT_QUERY` once a real transcript email format is known
-(open item, breakdown.md). Requires `SUPERMEMORY_SHARED_WRITE_API_KEY`
+(default `from:noreply-meet@google.com`, Google Meet's auto-transcript
+sender) and writes each into `org_shared`. For local testing without a
+real Meet transcript, either send a test email from that exact sender
+address, or temporarily widen `GMAIL_TRANSCRIPT_QUERY` in `.env` (e.g.
+`in:inbox`) so a test email from any address gets picked up — remember
+to set it back before real use. Requires `SUPERMEMORY_SHARED_WRITE_API_KEY`
 set — aborts loud if missing, same guard as `backfill_slack.py`. Safe
 to re-run; dedup is not yet built (same known gap as §5).
 
@@ -179,13 +184,73 @@ There is no live Gmail listener yet (would need a separate Pub/Sub push
 subscription) — this is backfill/re-run only, same role
 `backfill_slack.py` plays for Slack.
 
-## 7. Run tests
+## 7. Voice loop (phase 3 / M3, no live meeting join yet)
+
+Built on [pipecat](https://github.com/pipecat-ai/pipecat) — a
+maintained real-time voice-agent framework — instead of a hand-rolled
+loop. It wraps the same backends directly: `WhisperSTTService` wraps
+`faster-whisper`, `KokoroTTSService` wraps `kokoro-onnx`,
+`OpenRouterLLMService` is a thin client against the same OpenRouter
+endpoint `app/llm/router.py` uses. Real voice-activity detection
+(Silero VAD) replaces a fixed recording duration, and a native
+wake-phrase turn strategy replaces a hand-written regex check. No
+Google Meet integration yet (that is phase 4 / M4) —
+`LocalAudioTransport` here is for standalone testing: your own mic and
+speakers.
+
+System setup (macOS):
+
+```bash
+brew install portaudio   # required for PyAudio / local audio transport
+pip install -r requirements.txt
+```
+
+Fetch the Kokoro TTS model files once (optional — `KokoroTTSService`
+auto-downloads them to `~/.cache/pipecat/kokoro-onnx` on first use if
+missing, but a manual fetch lets you control where they land):
+
+```bash
+curl -L -o kokoro-v1.0.onnx https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.onnx
+curl -L -o voices-v1.0.bin https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin
+```
+
+`KOKORO_MODEL_PATH`/`KOKORO_VOICES_PATH` in `.env` point at those two
+files (defaults assume the project root); `TTS_VOICE` picks the voice.
+`AGENT_NAME` is the phrase that starts a turn; `STT_MODEL_SIZE` sets
+the faster-whisper model size (weights auto-download on first use).
+
+Run it — a continuous, always-listening process, not a fixed-duration
+recording:
+
+```bash
+python -m app.voice.bot   # Ctrl+C to stop
+```
+
+Say "`<AGENT_NAME>`, `<question that org_shared can answer>`". Needs
+real `SUPERMEMORY_API_KEY`/`OPENROUTER_API_KEY` in `.env` — seed
+`org_shared` first (§4) so there is something to retrieve. On first
+run, macOS prompts for microphone access for your terminal app; if the
+prompt doesn't appear or you denied it, grant it manually under System
+Settings → Privacy & Security → Microphone, then restart the terminal.
+
+The one piece of custom logic — `org_shared` retrieval + the
+confidence gate (`CONFIDENCE_THRESHOLD`, same as the Slack surface) —
+lives in `app/voice/rag_gate.py:RagGate`, kept plain and synchronous on
+purpose so it stays fast to unit-test (`tests/test_rag_gate.py`, no
+audio/models/pipecat involved) even though the pipeline wiring around
+it (`app/voice/bot.py`) is async pipecat plumbing, exercised by
+running the bot directly instead. `RagGate` also owns the voice
+system prompt (plain spoken sentences, no markdown — TTS speaks
+whatever the LLM returns verbatim) and the "not sure" reply spoken
+when retrieval confidence is too low to answer.
+
+## 8. Run tests
 
 ```bash
 pytest
 ```
 
-## 8. Project layout
+## 9. Project layout
 
 ```
 app/
@@ -209,14 +274,18 @@ app/
   api/
     slack_app.py         # Slack bot surface (1.5), /standup + /ask-person (2.2)
     slack_mentions.py     # parse @mentions from slash-command text
+  voice/
+    rag_gate.py           # org_shared retrieval + confidence gate + voice system prompt (3.3/3.4), plain/sync
+    bot.py                  # pipecat pipeline: STT/wake-phrase/VAD/LLM/TTS wiring (3.1/3.2/3.5/3.6) — run with `python -m app.voice.bot`
 tests/
   seed_company_knowledge.py   # posts test org-knowledge messages
   test_isolation.py           # cross-person leak test (1.6)
   test_facilitator_a2a.py     # A2A wiring test, real local servers (2.1/2.2/2.3)
   test_slack_mentions.py      # @mention parsing unit tests
+  test_rag_gate.py            # confidence-gate unit tests (3.3/3.4), no audio/pipecat involved
 ```
 
-## 9. Status
+## 10. Status
 
 See `progress.md` for phase-by-phase build status. Phase 1 is complete
 (1.6 leak test passes). Phase 2 (facilitator mode + A2A) is done and

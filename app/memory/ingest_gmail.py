@@ -5,10 +5,8 @@ Pulls past meeting-transcript emails from one connected Gmail mailbox
 user's inbox) and writes them into shared org memory via the same
 write-gated path as Slack (`app/memory/shared.py`).
 
-No confirmed sample of Google Meet's real auto-transcript email exists
-yet, so `GMAIL_TRANSCRIPT_QUERY` defaults to a broad inbox scan
-(`in:inbox`). Narrow the query once a real transcript email is seen —
-see the open item in breakdown.md.
+`GMAIL_TRANSCRIPT_QUERY` defaults to Google Meet's known auto-transcript
+sender (`from:noreply-meet@google.com`).
 
 Gmail has no live-push listener wired up here (would need a separate
 Pub/Sub subscription) — this module only supports a one-off / re-runnable

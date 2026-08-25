@@ -59,11 +59,35 @@ class Settings(BaseSettings):
     gmail_client_id: str = ""
     gmail_client_secret: str = ""
     gmail_refresh_token: str = ""
-    # Gmail search query used to find transcript emails, e.g.
-    # "from:noreply-meet@google.com" once the real Meet auto-transcript
-    # sender is known. No confirmed sample yet — defaults to inbox scan;
-    # narrow this once real transcript emails are seen.
-    gmail_transcript_query: str = "in:inbox"
+    # Gmail search query used to find transcript emails — scoped to
+    # Google Meet's auto-transcript sender.
+    gmail_transcript_query: str = "from:noreply-meet@google.com"
+
+    # --- Voice loop (phase 3, tasks 3.1-3.5, pipecat-backed — app/voice/bot.py) ---
+    # Word/phrase pipecat's WakePhraseUserTurnStartStrategy (3.2) listens
+    # for to start a turn.
+    agent_name: str = "Agent"
+    # faster-whisper model size, passed to pipecat's WhisperSTTService
+    # (3.1). "base" is a reasonable CPU default; swap to "small"/"medium"
+    # if accuracy is too low.
+    stt_model_size: str = "base"
+    # NOT currently wired up: pipecat's WhisperSTTService does not expose
+    # faster-whisper's initial_prompt vocabulary-biasing param, so this
+    # has no effect since the pipecat migration (was used directly by our
+    # own faster-whisper wrapper before that). Kept in case a future
+    # pipecat version adds it, or a custom STT subclass wires it back in.
+    stt_vocab_hint: str = "auth, migration, PTO, Jira, Slack, Supermemory, standup"
+    # Kokoro voice id, passed to pipecat's KokoroTTSService (3.5).
+    # "af_heart" is one of Kokoro's built-in American-English voices.
+    tts_voice: str = "af_heart"
+    # kokoro-onnx model files, passed to pipecat's KokoroTTSService.
+    # Optional — if the files aren't at these paths, KokoroTTSService
+    # auto-downloads them to ~/.cache/pipecat/kokoro-onnx on first use
+    # (same files, same GitHub release URLs). Fetch manually instead
+    # (README §7 Voice loop) to control where they land or reuse an
+    # existing download.
+    kokoro_model_path: str = "kokoro-v1.0.onnx"
+    kokoro_voices_path: str = "voices-v1.0.bin"
 
     # --- A2A (agent-to-agent, phase 2 facilitator mode) ---
     # Host each PersonAgent's A2A server binds to.

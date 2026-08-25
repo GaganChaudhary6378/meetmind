@@ -11,3 +11,12 @@ httpx>=0.27
 google-auth>=2.30
 google-auth-oauthlib>=1.2
 google-api-python-client>=2.140
+# Voice loop (phase 3) — wraps faster-whisper (whisper extra), kokoro-onnx
+# (kokoro extra), and PyAudio (local extra) for us. Also needs
+# `brew install portaudio` (macOS system dep for PyAudio) — see README §7.
+pipecat-ai[whisper,kokoro,local]>=1.7
+# On Apple Silicon, pipecat's whisper module unconditionally imports
+# mlx_whisper at load time even though we only use the faster-whisper
+# backend — this extra is required just to satisfy that import, not
+# because we use MLX. Scoped to arm64 macOS; not needed elsewhere.
+pipecat-ai[mlx-whisper]>=1.7; sys_platform == "darwin" and platform_machine == "arm64"

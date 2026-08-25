@@ -44,22 +44,30 @@ def _provider_routing() -> dict:
     return provider
 
 
-def ask(prompt: str, context: str, tier: Tier = "answer") -> str:
+_DEFAULT_SYSTEM_PROMPT = (
+    "You are a personal meeting agent. Answer only from the "
+    "provided context. If the context does not contain the "
+    "answer, say you are not sure — do not guess."
+)
+
+
+def ask(prompt: str, context: str, tier: Tier = "answer", system_prompt: str | None = None) -> str:
     """Send prompt + retrieved memory context to the routed model, return text.
 
     `context` is pre-formatted retrieved memory (private + shared), not
     raw conversation history — retrieval happens in the caller.
+
+    `system_prompt` overrides the default instruction. Not currently
+    used by any caller — the voice loop (`app/voice/bot.py`) used to
+    call this with a plain-spoken-sentences override, but since the
+    pipecat migration it calls pipecat's `OpenRouterLLMService`
+    directly instead of going through this function (its system
+    prompt now lives in `app/voice/rag_gate.py:VOICE_SYSTEM_PROMPT`).
+    Kept as a generic override point for any future caller.
     """
     model = _MODEL_BY_TIER[tier]
     messages = [
-        {
-            "role": "system",
-            "content": (
-                "You are a personal meeting agent. Answer only from the "
-                "provided context. If the context does not contain the "
-                "answer, say you are not sure — do not guess."
-            ),
-        },
+        {"role": "system", "content": system_prompt or _DEFAULT_SYSTEM_PROMPT},
         {"role": "user", "content": f"Context:\n{context}\n\nQuestion:\n{prompt}"},
     ]
     response = _client().chat.completions.create(
